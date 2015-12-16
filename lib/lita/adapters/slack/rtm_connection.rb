@@ -1,5 +1,6 @@
 require 'faye/websocket'
 require 'multi_json'
+require 'pry'
 
 require 'lita/adapters/slack/api'
 require 'lita/adapters/slack/event_loop'
@@ -47,9 +48,14 @@ module Lita
 
             websocket.on(:open) { log.debug("Connected to the Slack Real Time Messaging API.") }
             websocket.on(:message) { |event| receive_message(event) }
-            websocket.on(:close) do
+            websocket.on(:close) do |event|
+              binding.pry
               log.info("Disconnected from Slack.")
-              shut_down
+              # Even if we're going to retry
+              # we should disconnect the websocket first
+              # as it's dead; and can no longer be left open
+              shut_down(1)
+              try_reconnect
             end
             websocket.on(:error) { |event| log.debug("WebSocket error: #{event.message}") }
 
@@ -63,13 +69,30 @@ module Lita
           end
         end
 
-        def shut_down
-          if websocket
-            log.debug("Closing connection to the Slack Real Time Messaging API.")
-            websocket.close
-          end
+        def shut_down(mode)
+          if mode == 0
+            if websocket
+              log.debug("Closing connection to the Slack Real Time Messaging API.")
+              websocket.close
+            end
 
-          EventLoop.safe_stop
+            EventLoop.safe_stop
+          else
+            if websocket
+              log.debug("Closing connection to the Slack Real Time Messaging API. Then we finna retry.")
+              websocket.close
+            end
+          end
+        end
+
+        def try_reconnect
+          while true do
+            delay = 30.0
+            t = Time.now.to_f
+            frac = t.modulo(delay)
+            sleep(delay - frac)
+            binding.pry
+          end
         end
 
         private
